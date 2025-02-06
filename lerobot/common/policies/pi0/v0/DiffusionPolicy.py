@@ -5,9 +5,9 @@ from diffusers.schedulers.scheduling_ddpm import DDPMScheduler
 from diffusers.schedulers.scheduling_ddim import DDIMScheduler
 from diffusers.schedulers.scheduling_flow_match_euler_discrete import FlowMatchEulerDiscreteScheduler
 from diffusers.training_utils import EMAModel
-import torch.nn as nn
+from lerobot.common.policies.pi0.BasePolicy import BasePolicy
 
-class DiffusionPolicy(nn.Module):
+class DiffusionPolicy(BasePolicy):
     def __init__(
             self,
             net,
@@ -21,19 +21,7 @@ class DiffusionPolicy(nn.Module):
             prediction_type,
             ema_interval,
         ):
-        super().__init__()
-
-        self.do_compile = do_compile
-        if do_compile:
-            self.net = torch.compile(net)
-        else:
-            self.net = net
-        self.loss_configs = loss_configs
-
-        print("number of parameters: {:e}".format(
-            sum(p.numel() for p in self.net.parameters()))
-        )
-
+        super().__init__(net, loss_configs, do_compile)
         self.use_ema = True
         self.ema_interval = ema_interval
         self.ema = EMAModel(
@@ -62,23 +50,8 @@ class DiffusionPolicy(nn.Module):
             self.noise_scheduler = FlowMatchEulerDiscreteScheduler(
                 num_train_timesteps=num_train_steps,
             )
-
-    def compile(self, cache_size_limit=128):
-        torch._dynamo.config.cache_size_limit = cache_size_limit
-        torch._dynamo.config.optimize_ddp = False  # https://github.com/pytorch/pytorch/issues/104674
-        # TODO: https://github.com/pytorch/pytorch/issues/109774#issuecomment-2046633776
-        self.net = torch.compile(self.net)
-
-    def _parameters(self):
-        return filter(lambda p: p.requires_grad, self.net.parameters())
-
-    def forward(self, batch):
-        if self.training:
-            return self._compute_loss(batch)
-        else:
-            return self._infer(batch)
-
-    def _compute_loss(self, batch):
+    
+    def compute_loss(self, batch):
         device = batch['observation.state'].device
         B = batch['observation.state'].shape[0]
 
@@ -130,7 +103,7 @@ class DiffusionPolicy(nn.Module):
             loss['loss'] = loss['total_loss']
         return loss
 
-    def _infer(self, batch):
+    def infer(self, batch):
         device = batch['observation.state'].device
         B = batch['observation.state'].shape[0]
 
@@ -170,6 +143,35 @@ class DiffusionPolicy(nn.Module):
             elif self.loss_configs[key]['type'] == 'simple':
                 pred[key] = out[key]
         return pred
+                        
+    def save_pretrained(self, acc, path, epoch_id):
+        acc.wait_for_everyone()
+        if hasattr(acc.unwrap_model(self.net), '_orig_mod'): # the model has been compiled
+            ckpt = {"net": acc.unwrap_model(self.net)._orig_mod.state_dict()}
+            if self.use_ema:
+                self.ema.copy_to(self.ema_net.parameters())
+                ckpt["ema"] = acc.unwrap_model(self.ema_net)._orig_mod.state_dict()
+        else:
+            ckpt = {"net": acc.unwrap_model(self.net).state_dict()}
+            if self.use_ema:
+                self.ema.copy_to(self.ema_net.parameters())
+                ckpt["ema"] = acc.unwrap_model(self.ema_net).state_dict()
+        acc.save(ckpt, path / f'policy_{epoch_id}.pth')
+
+    def load_pretrained(self, acc, path, load_epoch_id):
+        if os.path.isfile(path / f'policy_{load_epoch_id}.pth'):
+            ckpt = torch.load(path / f'policy_{load_epoch_id}.pth', map_location='cpu', weights_only=True)
+            if self.do_compile:
+                missing_keys, unexpected_keys = self.net._orig_mod.load_state_dict(ckpt["net"])
+                if self.use_ema:
+                    missing_keys, unexpected_keys = self.ema_net._orig_mod.load_state_dict(ckpt["ema"])
+            else:
+                missing_keys, unexpected_keys = self.net.load_state_dict(ckpt["net"])
+                if self.use_ema:
+                    missing_keys, unexpected_keys = self.ema_net.load_state_dict(ckpt["ema"])
+            acc.print('load ', path / f'policy_{load_epoch_id}.pth', '\nmissing ', missing_keys, '\nunexpected ', unexpected_keys)
+        else: 
+            acc.print(path / f'policy_{load_epoch_id}.pth', 'does not exist. Initialize new checkpoint')
 
     def update_ema(self):
         self.ema.step(self.net.parameters())

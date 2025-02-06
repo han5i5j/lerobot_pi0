@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 @dataclass
 class FlorencePi0Config:
 
-    device:str = None
+    device:str = 'cuda'
     num_actions_6d:int = 6
     lowdim_obs_dim:int = 6
     chunk_size:int = 2

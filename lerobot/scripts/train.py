@@ -428,9 +428,13 @@ def train(cfg: DictConfig, out_dir: str | None = None, job_name: str | None = No
         batch = next(dl_iter)
         dataloading_s = time.perf_counter() - start_time
 
-        for key in batch:
-            batch[key] = batch[key].to(device, non_blocking=True)
+        # for key in batch:
+        #     # batch[key] = batch[key].to(device, non_blocking=True)
+        #     batch[key] = batch[key].to(device,non_blocking=False)
 
+        gpu_batch = {k: v.to(device) for k, v in batch.items()}
+        batch = gpu_batch
+        # batch = {k: v.to(device) for k, v in batch.items()}
         train_info = update_policy(
             policy,
             batch,

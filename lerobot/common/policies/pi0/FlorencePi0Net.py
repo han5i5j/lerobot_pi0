@@ -66,13 +66,21 @@ class FlorencePi0Net(nn.Module):
             # rgb_features = self.net._encode_image(rgb)
             # B_T_V, N, D = rgb_features.shape
             # rgb_features = rgb_features.view(B, T*V*N, D)
-
-            rgb = torch.stack((batch['observation.images.laptop'],batch['observation.images.phone']),dim=2)
-            B, T, V, C, H, W = rgb.shape
-            rgb_features = self.net._encode_image(rgb.view(B*T*V, C, H, W))
-            B_T_V, N, D = rgb_features.shape
-            rgb_features = rgb_features.view(B, T*V*N, D)
-
+            img_dim = batch['observation.images.laptop'].dim()
+            if img_dim == 5:
+                # B, T, C, H, W
+                rgb = torch.stack((batch['observation.images.laptop'],batch['observation.images.phone']),dim=2)
+                B, T, V, C, H, W = rgb.shape
+                rgb_features = self.net._encode_image(rgb.view(B*T*V, C, H, W))
+                B_T_V, N, D = rgb_features.shape
+                rgb_features = rgb_features.view(B, T*V*N, D)
+            elif img_dim == 4:
+                # B, C, H, W
+                rgb = torch.stack((batch['observation.images.laptop'], batch['observation.images.phone']), dim=1)
+                B, V, C, H, W = rgb.shape
+                rgb_features = self.net._encode_image(rgb.view(B * V, C, H, W))
+                B_T_V, N, D = rgb_features.shape
+                rgb_features = rgb_features.view(B, V * N, D)
             
             text_embeds = self.prompt_embeds.repeat(B, 1, 1) # (b n d)
             inputs_embeds, attention_mask = self.net._merge_input_ids_with_image_features(rgb_features, text_embeds)
@@ -83,6 +91,10 @@ class FlorencePi0Net(nn.Module):
             obs_features = batch['obs_features']
 
         low_dim = self.low_dim_encoder(batch['observation.state']) # (b, t, d)
+        state_dim = low_dim.dim()
+        if state_dim == 2:
+            low_dim = low_dim.unsqueeze(1)
+
 
         noisy_actions = self.action_encoder(batch['noisy_inputs']['action'])
         B, T, D = noisy_actions.shape

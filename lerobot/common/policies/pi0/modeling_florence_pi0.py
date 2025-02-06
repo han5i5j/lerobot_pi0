@@ -66,7 +66,7 @@ class FlorencePi0Policy(nn.Module,
             freeze_vision_tower=freeze_vision_tower,
             num_actions=num_actions_6d,
             lowdim_obs_dim=lowdim_obs_dim,
-        )
+        ).to(self.config.device)
 
     def init_inner_policy(self):
         # num_actions_6d = 6
@@ -104,11 +104,17 @@ class FlorencePi0Policy(nn.Module,
 
     def forward(self, batch: dict[str, Tensor]) -> dict[str, Tensor]:
         batch = self.preprocessor.process(batch, train=True)
-        loss = self.policy.compute_loss(batch)
-        return loss
+        return self.policy.forward(batch)
 
     def reset(self):
         pass
 
     def select_action(self, batch: dict[str, Tensor]) -> Tensor:
-        pass
+        batch = self.preprocessor.process(batch, train=False)
+        pred = self.policy.forward(batch)
+        real_pred = self.preprocessor.back_process(pred)
+        return real_pred['action'][:,0,:]
+
+    def update(self):
+        if self.policy.use_ema:
+            self.policy.update_ema()

@@ -53,7 +53,7 @@ class PreProcess():
                     batch[key] = self.configs[key]['train_transforms'](batch[key])
                 else:
                     batch[key] = self.configs[key]['eval_transforms'](batch[key])
-                batch[key] = batch[key].float() / 255.
+                # batch[key] = batch[key].float() / 255.
             # if 'enable_6d_rot' in self.configs[key]:
             #     if self.configs[key]['abs_mode']:
             #         rot_axis = batch[key][..., 3:6]
